@@ -155,7 +155,7 @@ const Puzzles = (() => {
 
   // ---------- szablony zadań ----------
   const T = [];
-  const add = (id, topic, rating, kind, title, make) => T.push({ id, topic, rating, kind, title, make });
+  const add = (id, topic, rating, kind, title, make, opt = {}) => T.push({ id, topic, rating, kind, title, make, pool: opt.pool !== false });
 
   add('dcf-da-sign', 'DCF', 950, 'fix', 'Amortyzacja w FCFF', rng => {
     const base = dcfBase(rng);
@@ -535,6 +535,16 @@ const Puzzles = (() => {
       expl: 'Najdokładniej jest wziąć rentowność obligacji spółki (np. WIBOR + marża z Catalyst) albo dodać marżę do stopy wolnej od ryzyka. Bez obligacji marżę szacujesz z porównywalnych emitentów, zwykle w przedziale 1–4%. Checklista pyta: „Czy koszt długu jest zgodny z oprocentowaniem kredytów i leasingów w spółce?”. Stąd kontrola z not.' };
   });
 
+  // pełny mini-DCF do gry z botem: wszystkie formuły do zbudowania od zera
+  add('dcf-full', 'DCF', 1300, 'build', 'Pełny mini-DCF', rng => {
+    const base = dcfBase(rng);
+    const gaps = [5, 6, 10, 11, 12].flatMap(r => cols5.map(c => c + r)).concat(['I8', 'I9', 'I10', 'I11', 'I12', 'I13']);
+    return { ...dcfView, checks: ['I11', 'I13'], ...withGaps(base.cells, gaps),
+      brief: 'Zbuduj cały model: podatek od EBIT, NOPAT, FCFF, czynniki dyskontowe, PV, sumę PV, TV (Gordon), PV TV, EV, equity i wartość na akcję. Dane wejściowe są niebieskie.',
+      hint: 'Kolejność: podatek = −EBIT × $I$2 → NOPAT → FCFF = NOPAT + D&A − CAPEX − ΔNWC → DF = 1/(1+$I$3)^t → PV → SUM → TV = F10×(1+g)/(WACC−g) → PV TV → EV → − dług netto → / akcje.',
+      expl: 'To pełny szkielet DCF. W prawdziwym modelu każdy z tych wierszy jest zasilany z osobnych arkuszy prognoz.' };
+  }, { pool: false });
+
   const byId = Object.fromEntries(T.map(t => [t.id, t]));
   function instantiate(id, seed) {
     const t = byId[id]; const p = t.make(rngFrom(seed));
@@ -555,7 +565,7 @@ const Puzzles = (() => {
 
   // dobór zadania do ratingu (jak taktyki na chess.com): podobny poziom, unikamy powtórek
   function next(rating, recent = [], topic = null) {
-    const inTopic = T.filter(t => !topic || t.topic === topic);
+    const inTopic = T.filter(t => t.pool && (!topic || t.topic === topic));
     const fresh = inTopic.filter(t => !recent.slice(-4).includes(t.id));
     const pool = fresh.length ? fresh : inTopic;
     const scored = pool.map(t => ({ t, d: Math.abs(t.rating - rating) + Math.random() * 250 })).sort((a, b) => a.d - b.d);
@@ -563,5 +573,5 @@ const Puzzles = (() => {
   }
   const daily = day => { const h = hash('daily' + day); return instantiate(T[h % T.length].id, h); };
 
-  return { list: T, instantiate, check, next, daily, topics: [...new Set(T.map(t => t.topic))], hash, rngFrom };
+  return { list: T, byId, instantiate, check, next, daily, topics: [...new Set(T.map(t => t.topic))], hash, rngFrom };
 })();

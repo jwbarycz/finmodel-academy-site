@@ -6,7 +6,8 @@
   // ---------- konta (lokalne, do czasu backendu) i stan ----------
   const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
   const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } };
-  const fresh = () => ({ name: '', path: null, level: null, rating: 1000, ratingHist: [], attempts: 0, solved: 0, streak: 0, best: 0, last: null, days: {}, lessons: {}, recent: [], daily: {}, current: null, cases: [] });
+  const fresh = () => ({ name: '', path: null, level: null, rating: 1000, ratingHist: [], attempts: 0, solved: 0, streak: 0, best: 0, last: null, days: {}, lessons: {}, recent: [], daily: {}, current: null, cases: [],
+    history: [], favs: [], rush: {}, games: [], gameRating: 1000, battles: [], battleRating: 1000, vision: 0, arena: {}, bestReview: 0, tutorQs: 0, ctx: null, topicStats: {} });
   let accounts = load('fma_accounts', {}), user = load('fma_session', null), S = fresh();
   if (user && !accounts[user]) user = null;
   const loadState = () => { S = { ...fresh(), ...load('fma_state:' + user, {}) }; };
@@ -20,14 +21,12 @@
   const signIn = login => { user = login; store('fma_session', login); loadState(); };
   const signOut = () => { user = null; S = fresh(); store('fma_session', null); location.hash = '#/'; route(); };
 
-  // ścieżka „kurs od zera”: zadania, case i ranking czekają na ukończenie kursu
   const allLessons = () => Course.flatMap(m => m.lessons);
   const doneCount = () => allLessons().filter(l => S.lessons[l.id]).length;
   const courseDone = () => allLessons().every(l => S.lessons[l.id]);
   const nextLesson = () => allLessons().find(l => !S.lessons[l.id]);
   const moduleOf = id => Course.find(m => m.lessons.some(l => l.id === id));
   const lekcje = n => n === 1 ? 'lekcja' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? 'lekcje' : 'lekcji';
-  const isLocked = sec => S.path === 'course' && !courseDone() && ['zadania', 'case', 'ranking'].includes(sec);
   const dayStr = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const today = () => dayStr();
   const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dayStr(d); };
@@ -60,36 +59,47 @@
   $('#scrim').addEventListener('click', closeMenu);
   const setTop = html => { $('#crumbs').innerHTML = html; };
   // linki wewnątrz strony (np. do pytań w lekcji) przewijają bez zmiany trasy
+  // klik w link do bieżącej strony (np. „Rewanż”, „Jeszcze raz”) uruchamia ją od nowa
+  document.addEventListener('click', e => { const a = e.target.closest('a[href^="#/"]'); if (a && a.getAttribute('href') === location.hash) { e.preventDefault(); route(); } });
   app.addEventListener('click', e => { const a = e.target.closest('a[data-jump]'); if (a) { e.preventDefault(); $(a.dataset.jump)?.scrollIntoView({ behavior: 'smooth' }); } });
 
+  // menu jak na chess.com: Graj, Zadania, Ucz się, Trenuj, Oglądaj, Społeczność, Inne
+  const NAV = [
+    ['Start', [['home', '#/', '⌂', 'Pulpit']]],
+    ['Graj', [['graj', '#/graj', '🤖', 'Graj z botem'], ['trener', '#/trener', '🧠', 'Trener AI'], ['warianty', '#/warianty', '🎲', 'Warianty'], ['statystyki', '#/statystyki', '📈', 'Statystyki'], ['historia', '#/historia', '🕘', 'Historia']]],
+    ['Zadania', [['zadania', '#/zadania', '♟', 'Zadania z rankingiem'], ['dzienne', '#/zadania/dzienne', '★', 'Zadanie dnia'], ['tematy', '#/tematy', '🏷', 'Zadania tematyczne'], ['rush', '#/rush', '⚡', 'Model Rush'], ['pojedynek', '#/pojedynek', '⚔️', 'Pojedynek']]],
+    ['Ucz się', [['kurs', '#/kurs', '▤', 'Lekcje'], ['otwarcia', '#/otwarcia', '♞', 'Drivery branżowe'], ['slownik', '#/slownik', '📖', 'Słownik pojęć']]],
+    ['Trenuj', [['kursy', '#/kursy', '🗺', 'Kursy'], ['recenzja', '#/recenzja', '🔍', 'Recenzja modelu'], ['koncowki', '#/koncowki', '🏁', 'Końcówki'], ['cwicz', '#/cwicz', '✏️', 'Ćwicz od pozycji'], ['case', '#/case', '▦', 'Case studies'], ['plan', '#/plan', '🎯', 'Plan treningowy'], ['klasa', '#/klasa', '🏫', 'Klasa']]],
+    ['Oglądaj', [['ogladaj', '#/ogladaj', '📺', 'Rozbiory wycen']]],
+    ['Społeczność', [['ranking', '#/ranking', '⚑', 'Ranking'], ['arena', '#/arena', '🏟', 'Arena tygodnia'], ['osiagniecia', '#/osiagniecia', '🏅', 'Osiągnięcia']]],
+    ['Inne', [['kolekcje', '#/kolekcje', '☆', 'Kolekcje'], ['baza', '#/baza', '🗄', 'Baza zadań'], ['standardy', '#/standardy', '📋', 'Standardy Funduszu'], ['narzedzia', '#/narzedzia', '🧮', 'Narzędzia'], ['orientacja', '#/orientacja', '🎯', 'Orientacja w arkuszu']]],
+  ];
+  let navOpen = load('fma_nav', { Start: true, Zadania: true });
+  const routeKey = () => { const [, a = '', b = ''] = (location.hash || '#/').split('/'); return a === 'zadania' && b === 'dzienne' ? 'dzienne' : a || 'home'; };
+  $('#links').addEventListener('click', e => {
+    const h = e.target.closest('.sb-group-h'); if (!h) return;
+    navOpen[h.dataset.sec] = !navOpen[h.dataset.sec]; store('fma_nav', navOpen); renderNav();
+  });
+
   function renderNav() {
-    const ready = !!(user && S.path);
+    const ready = !!(user && (S.level || S.path));
     document.body.classList.toggle('bare', !ready);
     if (!ready) return;
-    const [, a = '', b = ''] = (location.hash || '#/').split('/');
-    const key = a === 'zadania' && b === 'dzienne' ? 'dzienne' : a || 'home';
-    const daily = S.daily[today()];
-    const item = (k, href, ic, label, badge = '') => {
-      const locked = isLocked(k === 'dzienne' ? 'zadania' : k);
-      return `<a href="${href}" class="sb-link${key === k ? ' active' : ''}${locked ? ' locked' : ''}"${locked ? ' title="Odblokujesz po ukończeniu kursu"' : ''}>
-        <span class="ic">${locked ? '🔒' : ic}</span><span>${label}</span>${badge && !locked ? `<span class="badge">${badge}</span>` : ''}</a>`;
-    };
-    $('#links').innerHTML = `
-      <div class="sb-section">Nauka</div>
-      ${item('home', '#/', '⌂', 'Pulpit')}
-      ${item('kurs', '#/kurs', '▤', 'Manual wyceny', `${doneCount()}/${allLessons().length}`)}
-      <div class="sb-section">Praktyka</div>
-      ${item('dzienne', '#/zadania/dzienne', '★', 'Zadanie dnia', daily ? (daily.ok ? '✓' : '•') : 'nowe')}
-      ${item('zadania', '#/zadania', '♟', 'Trening', S.rating)}
-      ${item('case', '#/case', '▦', 'Case studies', S.cases.length || '')}
-      <div class="sb-section">Fundusz</div>
-      ${item('ranking', '#/ranking', '⚑', 'Ranking')}`;
+    const key = routeKey(), daily = S.daily[today()];
+    const badges = { kurs: `${doneCount()}/${allLessons().length}`, dzienne: daily ? (daily.ok ? '✓' : '•') : 'nowe', zadania: S.rating, rush: Math.max(0, ...Object.values(S.rush)) || '', graj: S.gameRating, kolekcje: S.favs.length || '', case: S.cases.length || '' };
+    $('#links').innerHTML = NAV.map(([sec, items]) => {
+      const active = items.some(i => i[0] === key), open = sec === 'Start' || navOpen[sec] || active;
+      return `<div class="sb-group${open ? ' open' : ''}">
+        ${sec === 'Start' ? '' : `<button type="button" class="sb-group-h" data-sec="${sec}" aria-expanded="${open}"><span>${sec}</span><span class="chev">${open ? '−' : '+'}</span></button>`}
+        ${open ? items.map(([k, href, ic, label]) => `<a href="${href}" class="sb-link${key === k ? ' active' : ''}"><span class="ic">${ic}</span><span>${label}</span>${badges[k] !== undefined && badges[k] !== '' ? `<span class="badge">${badges[k]}</span>` : ''}</a>`).join('') : ''}
+      </div>`;
+    }).join('');
     const n = nextLesson();
-    $('#sbProgress').innerHTML = `<div class="sb-section">Postęp kursu</div>${bar(doneCount(), allLessons().length)}
+    $('#sbProgress').innerHTML = `<div class="sb-section">Postęp manuala</div>${bar(doneCount(), allLessons().length)}
       <div class="sb-prog-t">${doneCount()} z ${allLessons().length} lekcji${n ? ` · dalej: <a href="#/kurs/${n.id}">${esc(n.title)}</a>` : ' · ukończony 🎓'}</div>`;
-    const name = S.name || user;
-    $('#user').innerHTML = `<span class="avatar">${esc(name.trim()[0] || '?').toUpperCase()}</span><span class="sb-user-t"><b>${esc(name)}</b><span>@${esc(user)} · ${S.path === 'course' ? 'kurs od zera' : 'praktyka'}</span></span>`;
-    $('#stats').innerHTML = `<span class="stat" title="Seria dni">🔥 ${liveStreak()}</span><span class="stat" title="Rating zadań">♟ ${S.rating}</span><span class="stat hide-s" title="Ukończone lekcje">▤ ${doneCount()}/${allLessons().length}</span>`;
+    const name = S.name || user, lvl = Data.levels.find(l => l.id === S.level);
+    $('#user').innerHTML = `<span class="avatar">${esc(name.trim()[0] || '?').toUpperCase()}</span><span class="sb-user-t"><b>${esc(name)}</b><span>@${esc(user)}${lvl ? ' · ' + lvl.t.toLowerCase() : ''}</span></span>`;
+    $('#stats').innerHTML = `<span class="stat" title="Seria dni">🔥 ${liveStreak()}</span><span class="stat" title="Rating zadań">♟ ${S.rating}</span><span class="stat hide-s" title="Rating gry z botami">🤖 ${S.gameRating}</span><span class="stat hide-s" title="Najlepszy Model Rush">⚡ ${Math.max(0, ...Object.values(S.rush))}</span>`;
   }
 
   // ---------- rejestracja / logowanie ----------
@@ -138,169 +148,159 @@
     });
   }
 
-  // ---------- wybór ścieżki ----------
+  // ---------- wybór poziomu (jak na chess.com) ----------
   function viewOnboarding() {
-    const levels = [
-      ['basic', 1000, 'Znam teorię DCF i WACC, mam mało praktyki'],
-      ['mid', 1200, 'Mam za sobą pierwsze modele, np. w funduszu albo na praktykach'],
-      ['pro', 1400, 'Modeluję zawodowo albo startuję w case competitions'],
-    ];
     app.innerHTML = `<div class="onb">
       <span class="logo logo-lg" role="img" aria-label="Fundusz Hossa ProCapital"></span>
       <h1 class="page-header">Cześć, ${esc(S.name || user)}!</h1>
-      <p class="lead">Od czego zaczynasz? Wybór ustawi Twoją ścieżkę i początkowy rating.</p>
-      <div class="paths">
-        <button class="path card" data-path="course">
-          <span class="ic-lg">▤</span>
-          <span class="path-t">Kurs od zera</span>
-          <span class="path-d">Prowadzimy Cię krok po kroku przez manual wyceny Funduszu: ${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)} z ćwiczeniami w arkuszu. Zadania, case studies i ranking odblokują się po ukończeniu kursu.</span>
-        </button>
-        <button class="path card" data-path="free">
-          <span class="ic-lg">♟</span>
-          <span class="path-t">Znam podstawy, od razu do praktyki</span>
-          <span class="path-d">Masz dostęp do wszystkiego: zadań z ratingiem, case studies i rankingu. Do kursu możesz wracać w dowolnym momencie.</span>
-        </button>
+      <p class="lead">Jak oceniasz swoje umiejętności w wycenie i modelowaniu? Na tej podstawie dobierzemy początkowy rating, zadania i boty. Rating i tak dopasuje się do Twoich wyników.</p>
+      <div class="levels">
+        ${Data.levels.map(l => `<button class="card level-card" data-lvl="${l.id}"><span class="lvl-t">${esc(l.t)}</span><span class="path-d">${esc(l.d)}</span><span class="chip">start ♟ ${l.rating}</span></button>`).join('')}
       </div>
-      <form id="levelForm" class="level card" hidden>
-        <h2>Jak oceniasz swój poziom?</h2>
-        ${levels.map(([k, r, l], i) => `<label class="opt"><input type="radio" name="lvl" value="${k}" ${i ? '' : 'checked'}><span>${esc(l)}</span><span class="chip">start ♟ ${r}</span></label>`).join('')}
-        <button class="primary">Zaczynamy</button>
-      </form>
     </div>`;
-    const start = (path, level) => {
-      S.path = path; S.level = level; S.rating = (levels.find(x => x[0] === level) || [, 1000])[1]; S.onboarded = Date.now(); save();
-      location.hash = path === 'course' ? '#/kurs/' + allLessons()[0].id : '#/'; route();
-    };
-    app.querySelectorAll('.path').forEach(b => b.addEventListener('click', () => {
-      app.querySelectorAll('.path').forEach(x => x.classList.toggle('chosen', x === b));
-      if (b.dataset.path === 'course') start('course', null);
-      else { $('#levelForm').hidden = false; $('#levelForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    app.querySelectorAll('.level-card').forEach(b => b.addEventListener('click', () => {
+      const l = Data.levels.find(x => x.id === b.dataset.lvl);
+      Object.assign(S, { level: l.id, rating: l.rating, gameRating: l.rating, battleRating: l.rating, onboarded: Date.now() }); save();
+      location.hash = '#/'; route();
     }));
-    $('#levelForm').addEventListener('submit', e => { e.preventDefault(); start('free', e.target.lvl.value); });
-  }
-
-  // ---------- sekcja zablokowana ----------
-  function viewLocked(sec) {
-    const names = { zadania: 'Zadania', case: 'Case studies', ranking: 'Ranking' };
-    const n = nextLesson();
-    setTop(`<span>${names[sec]}</span>`);
-    app.innerHTML = `<div class="card locked-card">
-      <span class="ic-lg">🔒</span>
-      <h1 class="page-header">${names[sec]}</h1>
-      <p class="lead">Ta sekcja odblokuje się po ukończeniu kursu. Na ścieżce „kurs od zera” najpierw budujemy fundamenty.</p>
-      ${bar(doneCount(), allLessons().length)}
-      <p class="muted">${doneCount()} z ${allLessons().length} lekcji ukończonych</p>
-      ${n ? `<a class="btn primary" href="#/kurs/${n.id}">Kontynuuj: ${esc(n.title)} →</a>` : ''}
-    </div>`;
   }
 
   // ---------- pulpit ----------
   function viewHome() {
     const total = allLessons().length, done = doneCount(), n = nextLesson(), m = n && moduleOf(n.id);
-    const coursePath = S.path === 'course' && !courseDone();
     const daily = S.daily[today()];
     const days = [...Array(35)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 34 + i); return S.days[dayStr(d)] || 0; });
-    const lockedNote = coursePath ? '<span class="chip">🔒 po kursie</span>' : '';
     setTop('<span>Pulpit</span>');
+    const tiles = [['#/graj', '🤖', 'Graj z botem', 'Zbuduj pełny mini-DCF na czas i pokonaj bota.'], ['#/rush', '⚡', 'Model Rush', '3 minuty szybkich obliczeń: FCFF, WACC, TV, mnożniki.'],
+      ['#/pojedynek', '⚔️', 'Pojedynek', 'Rush 1 na 1 z innym analitykiem.'], ['#/trener', '🧠', 'Trener AI', 'Zapytaj o dowolny krok wyceny.'],
+      ['#/arena', '🏟', 'Arena tygodnia', '8 zadań tygodnia, jedna próba, tabela wyników.'], ['#/plan', '🎯', 'Plan treningowy', 'Twoje słabe strony i co ćwiczyć dalej.']];
     app.innerHTML = `
-      <div class="page-head"><h1 class="page-header">${done ? 'Witaj ponownie' : 'Witaj'}, ${esc((S.name || user).split(' ')[0])}</h1>
-        <p class="lead">${coursePath ? 'Jesteś na ścieżce „kurs od zera”. Każda ukończona lekcja przedłuża serię dni.' : 'Twoje miejsce do nauki wyceny: kurs, codzienne zadania i własne modele.'}</p></div>
+      <div class="page-head"><h1 class="page-header">${S.history.length || done ? 'Witaj ponownie' : 'Witaj'}, ${esc((S.name || user).split(' ')[0])}</h1>
+        <p class="lead">Graj, rozwiązuj zadania, ucz się i trenuj wycenę tak jak w Funduszu.</p></div>
       <div class="dash">
         <section class="card hero-card">
-          <div class="eyebrow">${n ? 'Kontynuuj naukę' : 'Manual wyceny'}</div>
+          <div class="eyebrow">${n ? 'Kontynuuj naukę' : 'Lekcje'}</div>
           ${n ? `<h2 class="card-title">${esc(n.title)}</h2><p class="muted">Moduł ${Course.indexOf(m) + 1}: ${esc(m.title)}</p>`
-            : `<h2 class="card-title">Kurs ukończony 🎓</h2><p class="muted">Wracaj do lekcji, kiedy chcesz odświeżyć standardy Funduszu.</p>`}
+            : `<h2 class="card-title">Manual ukończony 🎓</h2><p class="muted">Wracaj do lekcji, kiedy chcesz odświeżyć standardy Funduszu.</p>`}
           ${bar(done, total)}
           <div class="row-between"><span class="muted small">${done} z ${total} lekcji · ${pct(done, total)}%</span>
-            <a class="btn primary" href="#/kurs${n ? '/' + n.id : ''}">${n ? (done ? 'Kontynuuj' : 'Zacznij') + ' →' : 'Otwórz manual'}</a></div>
+            <a class="btn primary" href="#/kurs${n ? '/' + n.id : ''}">${n ? (done ? 'Kontynuuj' : 'Zacznij') + ' →' : 'Otwórz lekcje'}</a></div>
         </section>
-        <section class="card daily-card${coursePath ? ' is-locked' : ''}">
+        <section class="card daily-card">
           <div class="eyebrow">Zadanie dnia</div>
           <h2 class="card-title">${daily ? (daily.ok ? 'Rozwiązane ✓' : 'Podjęte') : 'Czeka na Ciebie'}</h2>
           <p class="muted">Jedno zadanie w arkuszu dziennie podtrzymuje serię.</p>
-          ${coursePath ? lockedNote : `<a class="btn" href="#/zadania/dzienne">${daily ? 'Zobacz' : 'Rozwiąż'} →</a>`}
+          <a class="btn" href="#/zadania/dzienne">${daily ? 'Zobacz' : 'Rozwiąż'} →</a>
         </section>
       </div>
       <div class="stat-row">
         <div class="card stat-card"><div class="k">Seria</div><div class="v">🔥 ${liveStreak()}</div><div class="s">najdłuższa: ${S.best}</div></div>
-        <div class="card stat-card"><div class="k">Rating</div><div class="v">${S.rating}</div><div class="s">${S.solved}/${S.attempts} rozwiązanych</div></div>
-        <div class="card stat-card"><div class="k">Lekcje</div><div class="v">${done}/${total}</div><div class="s">${pct(done, total)}% manuala</div></div>
-        <div class="card stat-card"><div class="k">Modele</div><div class="v">${S.cases.length}</div><div class="s">case studies</div></div>
+        <div class="card stat-card"><div class="k">Zadania</div><div class="v">♟ ${S.rating}</div><div class="s">${S.solved}/${S.attempts} rozwiązanych</div></div>
+        <div class="card stat-card"><div class="k">Gra z botami</div><div class="v">🤖 ${S.gameRating}</div><div class="s">${S.games.filter(g => g.res === 'w').length} wygranych</div></div>
+        <div class="card stat-card"><div class="k">Model Rush</div><div class="v">⚡ ${Math.max(0, ...Object.values(S.rush))}</div><div class="s">najlepszy wynik</div></div>
       </div>
-      <div class="dash dash-2">
-        <section class="card">
-          <div class="eyebrow">Aktywność · ostatnie 5 tygodni</div>
-          <div class="heat">${days.map(v => `<i class="l${Math.min(v, 3)}"></i>`).join('')}</div>
-          <div class="heat-legend muted small"><span>mniej</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><span>więcej</span></div>
-        </section>
-        <section class="quick">
-          ${[['#/zadania', '♟', 'Trening', 'Zadania dobierane do ratingu: błędy w formułach i brakujące fragmenty modelu.'],
-            ['#/case', '▦', 'Case studies', 'Własny model DCF i comps na danych z SEC EDGAR, GPW albo spółce demo.'],
-            ['#/ranking', '⚑', 'Ranking', 'Porównaj rating i serię z innymi członkami Funduszu.']]
-            .map(([h, ic, t, d]) => `<a class="card quick-card${coursePath ? ' is-locked' : ''}" href="${h}"><span class="ic-lg">${coursePath ? '🔒' : ic}</span><span><b>${t}</b><span class="muted small">${d}</span></span></a>`).join('')}
-        </section>
-      </div>`;
+      <div class="tile-grid">${tiles.map(([h, ic, t, d]) => `<a class="card quick-card" href="${h}"><span class="ic-lg">${ic}</span><span><b>${t}</b><span class="muted small">${d}</span></span></a>`).join('')}</div>
+      <section class="card">
+        <div class="eyebrow">Aktywność · ostatnie 5 tygodni</div>
+        <div class="heat">${days.map(v => `<i class="l${Math.min(v, 3)}"></i>`).join('')}</div>
+        <div class="heat-legend muted small"><span>mniej</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><span>więcej</span></div>
+      </section>`;
   }
 
   // ---------- zadania (puzzle) ----------
+  // wspólny moduł zadania w arkuszu; warianty: blind (tylko formuły), noHelp (bez podpowiedzi, jedno sprawdzenie), timeLimit (sekundy)
   function mountPuzzle(container, puzzle, opts = {}) {
     const book = new Sheet.Book(JSON.parse(JSON.stringify(puzzle.cells)));
+    const fav = () => S.favs.some(f => f.id === puzzle.id && f.seed === puzzle.seed);
     container.innerHTML = `
       <p class="brief">${esc(puzzle.brief)}</p>
       <div class="sheet-host"></div>
       <div class="actions">
         <button class="primary" data-act="check">Sprawdź</button>
-        <button data-act="hint">Podpowiedź</button>
-        <button data-act="solve">Pokaż rozwiązanie</button>
+        ${opts.noHelp ? '' : '<button data-act="hint">Podpowiedź</button><button data-act="solve">Pokaż rozwiązanie</button>'}
         <button data-act="reset">Od nowa</button>
+        <button data-act="fav" title="Zapisz w kolekcji">${fav() ? '★ W kolekcji' : '☆ Zapisz'}</button>
+        <button data-act="ask" title="Zapytaj trenera AI o to zadanie">🧠 Trener</button>
+        ${opts.timeLimit ? '<span class="timer" aria-live="polite"></span>' : ''}
         ${opts.nextLabel ? `<button data-act="next" class="push">${opts.nextLabel}</button>` : ''}
         <span class="msg" aria-live="polite"></span>
       </div>
       <div class="result"></div>
       <details class="keys"><summary>Skróty klawiszowe arkusza</summary><p><kbd>Enter</kbd>/<kbd>F2</kbd> edycja · <kbd>Ctrl/Cmd+C</kbd> <kbd>Ctrl/Cmd+V</kbd> kopiuj/wklej z przesunięciem adresów · <kbd>Shift</kbd>+strzałki zaznaczenie · <kbd>Ctrl/Cmd+\`</kbd> pokaż formuły · podczas pisania formuły klik w komórkę wstawia adres.</p></details>`;
-    let bad = new Set(), revealed = false;
+    let bad = new Set(), revealed = false, over = false, checks = 0;
     const view = new Sheet.View($('.sheet-host', container), book, {
       widths: puzzle.widths, start: puzzle.kind === 'build' ? Object.keys(puzzle.fix)[0] : 'B3',
       mark: a => [bad.has(a) ? 'bad' : '', revealed && puzzle.fix[a] ? 'fixed' : ''].join(' ').trim(),
       onChange: () => { bad = new Set(); },
       onMessage: m => { $('.msg', container).textContent = m; },
     });
+    if (opts.blind) { view.toggleFormulas(); $('.fx-toggle', container).hidden = true; container.classList.add('blind'); }
     const res = $('.result', container), msg = $('.msg', container);
+    const end = () => { over = true; clearInterval(timer); container.querySelectorAll('[data-act=check],[data-act=hint],[data-act=solve]').forEach(b => { b.disabled = true; }); };
+    let timer;
+    if (opts.timeLimit) {
+      const t0 = Date.now(), el = $('.timer', container);
+      const tick = () => {
+        const left = Math.max(0, opts.timeLimit - Math.floor((Date.now() - t0) / 1000));
+        el.textContent = `⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`; el.classList.toggle('low', left <= 15);
+        if (!document.body.contains(container)) clearInterval(timer);
+        else if (left === 0 && !over) { end(); res.innerHTML = `<div class="note bad"><b>Koniec czasu.</b> ${esc(puzzle.expl)}</div>`; opts.onResult?.(false, { timeout: true }); }
+      };
+      timer = setInterval(tick, 250); tick();
+    }
     container.onclick = e => {
-      const act = e.target.dataset?.act; if (!act) return;
-      if (act === 'check') {
-        const r = Puzzles.check(puzzle, book);
+      const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
+      if (act === 'check' && !over) {
+        const r = Puzzles.check(puzzle, book); checks++;
         bad = new Set([...r.problems, ...r.hard]); view.refresh();
         if (r.ok) res.innerHTML = `<div class="note ok"><b>Dobrze!</b> ${esc(puzzle.expl)}</div>`;
         else res.innerHTML = `<div class="note bad"><b>Jeszcze nie.</b> ${r.hard.length ? `W ${r.hard.join(', ')} oczekujemy formuły odwołującej się do komórek, a nie wpisanej liczby. ` : ''}${r.problems.length ? `Nie zgadzają się komórki kontrolne: ${r.problems.join(', ')}.` : ''}</div>`;
-        opts.onResult?.(r.ok, { hinted: !!res.dataset.hinted });
+        if (r.ok || opts.noHelp) { end(); if (opts.noHelp && !r.ok) res.innerHTML += `<div class="note">${esc(puzzle.expl)}</div>`; }
+        opts.onResult?.(r.ok, { hinted: !!res.dataset.hinted, checks });
       }
       if (act === 'hint') { res.dataset.hinted = 1; msg.textContent = ''; res.innerHTML = `<div class="note">💡 ${esc(puzzle.hint)}</div>`; opts.onHint?.(); }
       if (act === 'solve') {
         for (const [a, v] of Object.entries(puzzle.fix)) book.set(a, v);
-        revealed = true; bad = new Set(); view.select(view.sel);
+        revealed = true; bad = new Set(); view.select(view.sel); end();
         res.innerHTML = `<div class="note"><b>Rozwiązanie</b> (zielone komórki): ${Object.entries(puzzle.fix).map(([a, v]) => `<code>${a}: ${esc(v)}</code>`).join(' ')}<br>${esc(puzzle.expl)}</div>`;
         opts.onResult?.(false, { revealed: true });
       }
-      if (act === 'reset') mountPuzzle(container, puzzle, opts);
-      if (act === 'next') opts.onNext?.();
+      if (act === 'reset') { clearInterval(timer); mountPuzzle(container, puzzle, opts); }
+      if (act === 'fav') {
+        if (fav()) S.favs = S.favs.filter(f => !(f.id === puzzle.id && f.seed === puzzle.seed));
+        else S.favs.unshift({ id: puzzle.id, seed: puzzle.seed, title: puzzle.title, topic: puzzle.topic, t: Date.now() });
+        save(); e.target.closest('button').textContent = fav() ? '★ W kolekcji' : '☆ Zapisz'; renderNav();
+      }
+      if (act === 'ask') {
+        S.ctx = { label: `Zadanie: ${puzzle.title}`, text: `Uczeń rozwiązuje zadanie „${puzzle.title}” (${puzzle.topic}, ${puzzle.kind === 'fix' ? 'znajdź błąd' : 'zbuduj formuły'}). Treść: ${puzzle.brief} Podpowiedź z platformy: ${puzzle.hint}` };
+        save(); location.hash = '#/trener';
+      }
+      if (act === 'next') { clearInterval(timer); opts.onNext?.(); }
     };
     return { book, view };
   }
 
-  function viewPuzzles(mode) {
-    const daily = mode === 'dzienne';
-    let p, slot;
-    if (daily) { p = Puzzles.daily(today()); slot = S.daily[today()]; }
+  // zapis do historii (ostatnie 300 prób)
+  function record(e) {
+    S.history.unshift({ t: Date.now(), ...e }); S.history = S.history.slice(0, 300);
+    if (e.topic) { const ts = S.topicStats[e.topic] ||= { n: 0, ok: 0 }; ts.n++; if (e.ok) ts.ok++; }
+    save();
+  }
+
+  function viewPuzzles(mode, date) {
+    const daily = mode === 'dzienne', day = date || today(), archive = daily && day !== today();
+    let p;
+    if (daily) p = Puzzles.daily(day);
     else {
       if (!S.current) { const n = Puzzles.next(S.rating, S.recent, S.topic); S.current = { id: n.id, seed: n.seed, rated: false }; save(); }
       p = Puzzles.instantiate(S.current.id, S.current.seed);
     }
-    const ratedAlready = daily ? !!slot : S.current.rated;
-    setTop(`<span>Praktyka</span><span class="sep">/</span><span>${daily ? 'Zadanie dnia' : 'Trening'}</span>`);
+    const ratedAlready = daily ? (archive || !!S.daily[day]) : S.current.rated;
+    const strip = daily ? [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 13 + i); const k = dayStr(d); return `<a href="#/zadania/dzienne/${k}" class="day${k === day ? ' active' : ''}${S.daily[k]?.ok ? ' ok' : ''}" title="${k}">${d.getDate()}</a>`; }).join('') : '';
+    setTop(`<span>Zadania</span><span class="sep">/</span><span>${daily ? 'Zadanie dnia' : 'Zadania z rankingiem'}</span>`);
     app.innerHTML = `
       <div class="page-head row-between">
-        <div><div class="eyebrow">${daily ? 'Zadanie dnia · ' + new Date().toLocaleDateString('pl-PL') : 'Trening'}</div>
+        <div><div class="eyebrow">${daily ? 'Zadanie dnia · ' + new Date(day).toLocaleDateString('pl-PL') : 'Zadania z rankingiem'}</div>
           <h1 class="page-header">${esc(p.title)}</h1>
           <div class="chips"><span class="chip">${esc(p.topic)}</span><span class="chip">${p.kind === 'fix' ? 'znajdź błąd' : 'zbuduj'}</span><span class="chip">♟ ${p.rating}</span>${ratedAlready ? '<span class="chip">bez wpływu na rating</span>' : ''}</div></div>
         <div class="pz-side">
@@ -308,15 +308,17 @@
           ${daily ? '' : `<label class="topic">Temat<select id="topic"><option value="">wszystkie</option>${Puzzles.topics.map(t => `<option ${S.topic === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`}
         </div>
       </div>
+      ${daily ? `<div class="day-strip">${strip}</div>` : ''}
       <section class="card work-card" id="pz"></section>`;
     let hinted = false;
     const finish = (ok, info) => {
       if (daily) {
-        if (!S.daily[today()]) { S.daily[today()] = { ok }; applyRating(p, ok, hinted); if (ok) bumpStreak(); }
-        else if (ok && !S.daily[today()].ok) { S.daily[today()].ok = true; bumpStreak(); }
+        if (archive) { record({ mode: 'Archiwum zadań dnia', id: p.id, seed: p.seed, title: p.title, topic: p.topic, ok }); return; }
+        if (!S.daily[day]) { S.daily[day] = { ok }; const d = applyRating(p, ok, hinted); record({ mode: 'Zadanie dnia', id: p.id, seed: p.seed, title: p.title, topic: p.topic, ok, delta: d }); if (ok) bumpStreak(); }
+        else if (ok && !S.daily[day].ok) { S.daily[day].ok = true; bumpStreak(); }
         save(); renderNav(); return;
       }
-      if (!S.current.rated) { S.current.rated = true; applyRating(p, ok && !info.revealed, hinted); }
+      if (!S.current.rated) { S.current.rated = true; const d = applyRating(p, ok && !info.revealed, hinted); record({ mode: 'Zadania z rankingiem', id: p.id, seed: p.seed, title: p.title, topic: p.topic, ok: ok && !info.revealed, delta: d }); }
       if (ok && !S.current.solvedOnce) { S.current.solvedOnce = true; bumpStreak(); }
       save();
     };
@@ -331,8 +333,9 @@
   function applyRating(p, ok, hinted) {
     let d = elo(S.rating, p.rating, ok ? 1 : 0); if (ok && hinted) d = Math.round(d / 2);
     S.rating = Math.max(100, S.rating + d); S.attempts++; if (ok) S.solved++;
-    S.ratingHist.push({ t: Date.now(), r: S.rating }); S.ratingHist = S.ratingHist.slice(-200);
+    S.ratingHist.push({ t: Date.now(), r: S.rating }); S.ratingHist = S.ratingHist.slice(-300);
     toast(`${ok ? '✓' : '✗'} Rating ${d >= 0 ? '+' : ''}${d} → ${S.rating}`); renderNav();
+    return d;
   }
 
   // ---------- kurs ----------
@@ -381,7 +384,7 @@
           <nav class="pager">
             ${prev ? `<a class="card pager-card" href="#/kurs/${prev.id}"><span class="muted small">← Poprzednia</span><b>${esc(prev.title)}</b></a>` : '<span></span>'}
             ${next ? `<a class="card pager-card right" href="#/kurs/${next.id}"><span class="muted small">Następna →</span><b>${esc(next.title)}</b></a>`
-              : `<a class="card pager-card right" href="#/zadania"><span class="muted small">Koniec manuala →</span><b>Przejdź do treningu</b></a>`}
+              : `<a class="card pager-card right" href="#/zadania"><span class="muted small">Koniec manuala →</span><b>Przejdź do zadań</b></a>`}
           </nav>
         </div>
         <aside class="lesson-aside">
@@ -389,6 +392,7 @@
             <div class="eyebrow">Status lekcji</div>
             <div id="lstatus"></div>
           </section>
+          <a class="btn" href="#/trener" id="askLesson">🧠 Zapytaj trenera o tę lekcję</a>
           <section class="card">
             <div class="eyebrow">Moduł ${mi + 1}</div>
             <b class="aside-t">${esc(L.module.title)}</b>
@@ -404,8 +408,7 @@
       </ul>${done ? '<span class="chip ok">lekcja ukończona</span>' : '<span class="muted small">Ukończ wszystkie elementy, żeby zaliczyć lekcję.</span>'}`;
       if (quizOk.every(Boolean) && exOk && !S.lessons[id]) {
         S.lessons[id] = Date.now(); save(); bumpStreak();
-        if (S.path === 'course' && courseDone()) toast('🎓 Kurs ukończony! Odblokowano zadania, case studies i ranking');
-        else toast('🎓 Lekcja ukończona');
+        toast(courseDone() ? '🎓 Manual ukończony!' : '🎓 Lekcja ukończona');
         renderNav(); status();
       }
     };
@@ -415,6 +418,7 @@
       $('.qres', fs).innerHTML = `<div class="note ${ok ? 'ok' : 'bad'}">${ok ? '✓ ' + esc(q.expl) : '✗ Spróbuj jeszcze raz.'}</div>`;
       status();
     }));
+    $('#askLesson').addEventListener('click', () => { S.ctx = { label: `Lekcja: ${L.title}`, text: `Uczeń czyta lekcję „${L.title}” z modułu „${L.module.title}”. Treść lekcji: ${L.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 3500)}` }; save(); });
     if (L.exercise) mountPuzzle($('#ex'), Puzzles.instantiate(L.exercise, Puzzles.hash(id)), { onResult: ok => { if (ok) { exOk = true; status(); } } });
     status();
   }
@@ -423,20 +427,20 @@
   function viewRanking(tab = 'rating') {
     const rng = Puzzles.rngFrom(42);
     const names = ['Kasia W.', 'Michał K.', 'Ola P.', 'Bartek Z.', 'Zuza M.', 'Kuba D.', 'Natalia R.', 'Piotr S.', 'Ania L.', 'Tomek G.'];
-    const rows = names.map(n => ({ n, rating: 820 + Math.round(rng() * 700), streak: Math.round(rng() * 40), solved: Math.round(rng() * 300) }));
-    rows.push({ n: S.name ? `${S.name} (Ty)` : 'Ty', rating: S.rating, streak: liveStreak(), solved: S.solved, me: true });
+    const rows = names.map(n => ({ n, rating: 820 + Math.round(rng() * 700), streak: Math.round(rng() * 40), solved: Math.round(rng() * 300), rush: Math.round(rng() * 30), game: 800 + Math.round(rng() * 700) }));
+    rows.push({ n: S.name ? `${S.name} (Ty)` : 'Ty', rating: S.rating, streak: liveStreak(), solved: S.solved, rush: Math.max(0, ...Object.values(S.rush)), game: S.gameRating, me: true });
     rows.sort((a, b) => b[tab] - a[tab]);
     const pos = rows.findIndex(r => r.me) + 1;
-    setTop('<span>Fundusz</span><span class="sep">/</span><span>Ranking</span>');
+    setTop('<span>Społeczność</span><span class="sep">/</span><span>Ranking</span>');
     app.innerHTML = `
       <div class="page-head row-between">
         <div><h1 class="page-header">Ranking</h1>
           <p class="lead">Ranking członków Funduszu. <span class="muted">W wersji testowej pozostali uczestnicy są fikcyjni: prawdziwy ranking wymaga backendu z kontami.</span></p></div>
         <div class="card mini-progress"><div class="k">Twoje miejsce</div><div class="v">${pos} / ${rows.length}</div></div>
       </div>
-      <div class="seg">${[['rating', 'Rating'], ['streak', 'Seria'], ['solved', 'Rozwiązane']].map(([k, l]) => `<a href="#/ranking/${k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>
-      <section class="card table-card"><div class="table-container"><table class="rank"><thead><tr><th>#</th><th>Uczestnik</th><th>Rating</th><th>Seria</th><th>Rozwiązane</th></tr></thead><tbody>
-      ${rows.map((r, i) => `<tr class="${r.me ? 'me' : ''}"><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.rating}</td><td>🔥 ${r.streak}</td><td>${r.solved}</td></tr>`).join('')}
+      <div class="seg">${[['rating', 'Zadania'], ['game', 'Gra z botami'], ['rush', 'Model Rush'], ['streak', 'Seria'], ['solved', 'Rozwiązane']].map(([k, l]) => `<a href="#/ranking/${k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>
+      <section class="card table-card"><div class="table-container"><table class="rank"><thead><tr><th>#</th><th>Uczestnik</th><th>Zadania</th><th>Gra</th><th>Rush</th><th>Seria</th><th>Rozwiązane</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr class="${r.me ? 'me' : ''}"><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.rating}</td><td>${r.game}</td><td>${r.rush}</td><td>🔥 ${r.streak}</td><td>${r.solved}</td></tr>`).join('')}
       </tbody></table></div></section>`;
   }
 
@@ -559,18 +563,25 @@
     });
   }
 
+  // ---------- API dla pozostałych widoków (features.js) ----------
+  window.FMA = {
+    get S() { return S; }, get user() { return user; }, save, esc, $, bar, pct, setTop, toast, mountPuzzle, record, renderNav, bumpStreak, elo,
+    today, dayStr, lekcje, allLessons, doneCount, nextLesson, liveStreak, api,
+  };
+
   // ---------- router ----------
   function route() {
-    const [, a, b] = (location.hash || '#/').split('/');
-    window.scrollTo(0, 0); closeMenu();
+    const [, a = '', b, c] = (location.hash || '#/').split('/');
+    window.scrollTo(0, 0); closeMenu(); document.body.classList.remove('present');
+    if (user && !S.level && S.path) S.level = 'mid'; // konta sprzed wyboru poziomu
     renderNav();
     if (!user) viewAuth(a === 'logowanie' ? 'login' : 'register');
-    else if (!S.path) viewOnboarding();
-    else if (isLocked(a)) viewLocked(a);
+    else if (!S.level) viewOnboarding();
     else if (a === 'kurs') b ? viewLesson(b) : viewCourse();
-    else if (a === 'zadania') viewPuzzles(b);
+    else if (a === 'zadania') b === 'dzienne' ? viewPuzzles('dzienne', c) : viewPuzzles();
     else if (a === 'ranking') viewRanking(b || 'rating');
     else if (a === 'case') b ? viewCase(b) : viewCases();
+    else if (Views[a]) Views[a](app, b, c);
     else viewHome();
     renderNav();
   }
