@@ -22,7 +22,10 @@
 
   // ścieżka „kurs od zera”: zadania, case i ranking czekają na ukończenie kursu
   const allLessons = () => Course.flatMap(m => m.lessons);
+  const doneCount = () => allLessons().filter(l => S.lessons[l.id]).length;
   const courseDone = () => allLessons().every(l => S.lessons[l.id]);
+  const nextLesson = () => allLessons().find(l => !S.lessons[l.id]);
+  const moduleOf = id => Course.find(m => m.lessons.some(l => l.id === id));
   const lekcje = n => n === 1 ? 'lekcja' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? 'lekcje' : 'lekcji';
   const isLocked = sec => S.path === 'course' && !courseDone() && ['zadania', 'case', 'ranking'].includes(sec);
   const dayStr = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -35,6 +38,8 @@
     save(); renderNav();
   }
   const elo = (ur, pr, score, k = 32) => Math.round(k * (score - 1 / (1 + Math.pow(10, (pr - ur) / 400))));
+  const pct = (a, b) => b ? (a / b * 100).toFixed(1) : 0;
+  const bar = (a, b) => `<div class="progress"><i style="width:${pct(a, b)}%"></i></div>`;
 
   function toast(msg) {
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
@@ -47,40 +52,73 @@
   let theme; try { theme = localStorage.getItem('fma_theme'); } catch { }
   setTheme(theme || root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   $('#theme').addEventListener('click', () => setTheme(root.classList.contains('dark') ? 'light' : 'dark'));
+  $('#logout').addEventListener('click', signOut);
+
+  // ---------- pasek boczny i górny ----------
+  const closeMenu = () => document.body.classList.remove('nav-open');
+  $('#menuBtn').addEventListener('click', () => document.body.classList.toggle('nav-open'));
+  $('#scrim').addEventListener('click', closeMenu);
+  const setTop = html => { $('#crumbs').innerHTML = html; };
+  // linki wewnątrz strony (np. do pytań w lekcji) przewijają bez zmiany trasy
+  app.addEventListener('click', e => { const a = e.target.closest('a[data-jump]'); if (a) { e.preventDefault(); $(a.dataset.jump)?.scrollIntoView({ behavior: 'smooth' }); } });
 
   function renderNav() {
-    const ready = user && S.path;
-    $('#stats').innerHTML = ready ? `<span title="Seria dni">🔥 ${liveStreak()}</span><span title="Rating zadań">♟ ${S.rating}</span>` : '';
-    $('#links').innerHTML = !ready ? '' : [['kurs', 'kurs'], ['zadania', 'zadania'], ['case', 'case'], ['ranking', 'ranking']]
-      .map(([k, l]) => isLocked(k) ? `<span class="locked-link" title="Odblokujesz po ukończeniu kursu">🔒${l}</span>` : `<a href="#/${k}">${l}</a>`).join('&nbsp;/&nbsp;');
-    $('#user').innerHTML = user ? `<span class="muted">${esc(S.name || user)}</span> <button type="button" id="logout" class="link-btn">wyloguj</button>` : '';
-    $('#logout')?.addEventListener('click', signOut);
-    const h = location.hash || '#/';
-    document.querySelectorAll('.right-nav a').forEach(a => a.classList.toggle('active', h.startsWith(a.getAttribute('href')) && (a.getAttribute('href') !== '#/' || h === '#/')));
+    const ready = !!(user && S.path);
+    document.body.classList.toggle('bare', !ready);
+    if (!ready) return;
+    const [, a = '', b = ''] = (location.hash || '#/').split('/');
+    const key = a === 'zadania' && b === 'dzienne' ? 'dzienne' : a || 'home';
+    const daily = S.daily[today()];
+    const item = (k, href, ic, label, badge = '') => {
+      const locked = isLocked(k === 'dzienne' ? 'zadania' : k);
+      return `<a href="${href}" class="sb-link${key === k ? ' active' : ''}${locked ? ' locked' : ''}"${locked ? ' title="Odblokujesz po ukończeniu kursu"' : ''}>
+        <span class="ic">${locked ? '🔒' : ic}</span><span>${label}</span>${badge && !locked ? `<span class="badge">${badge}</span>` : ''}</a>`;
+    };
+    $('#links').innerHTML = `
+      <div class="sb-section">Nauka</div>
+      ${item('home', '#/', '⌂', 'Pulpit')}
+      ${item('kurs', '#/kurs', '▤', 'Manual wyceny', `${doneCount()}/${allLessons().length}`)}
+      <div class="sb-section">Praktyka</div>
+      ${item('dzienne', '#/zadania/dzienne', '★', 'Zadanie dnia', daily ? (daily.ok ? '✓' : '•') : 'nowe')}
+      ${item('zadania', '#/zadania', '♟', 'Trening', S.rating)}
+      ${item('case', '#/case', '▦', 'Case studies', S.cases.length || '')}
+      <div class="sb-section">Fundusz</div>
+      ${item('ranking', '#/ranking', '⚑', 'Ranking')}`;
+    const n = nextLesson();
+    $('#sbProgress').innerHTML = `<div class="sb-section">Postęp kursu</div>${bar(doneCount(), allLessons().length)}
+      <div class="sb-prog-t">${doneCount()} z ${allLessons().length} lekcji${n ? ` · dalej: <a href="#/kurs/${n.id}">${esc(n.title)}</a>` : ' · ukończony 🎓'}</div>`;
+    const name = S.name || user;
+    $('#user').innerHTML = `<span class="avatar">${esc(name.trim()[0] || '?').toUpperCase()}</span><span class="sb-user-t"><b>${esc(name)}</b><span>@${esc(user)} · ${S.path === 'course' ? 'kurs od zera' : 'praktyka'}</span></span>`;
+    $('#stats').innerHTML = `<span class="stat" title="Seria dni">🔥 ${liveStreak()}</span><span class="stat" title="Rating zadań">♟ ${S.rating}</span><span class="stat hide-s" title="Ukończone lekcje">▤ ${doneCount()}/${allLessons().length}</span>`;
   }
 
   // ---------- rejestracja / logowanie ----------
   function viewAuth(mode) {
     const reg = mode === 'register';
-    app.innerHTML = `
-      <h1 class="page-header">FinModel Academy</h1>
-      <p class="lead">Ćwicz modelowanie finansowe tak, jak wygląda ono w pracy w IB, PE i ER: DCF, WACC, analizę porównawczą, wyszukiwanie danych i budowanie założeń. Wszystko w arkuszu.</p>
-      <ul class="list features">
-        <li><b>Manual wyceny Funduszu</b>: ${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)}, od wyboru spółki po raport i aktualizacje, na bazie materiałów Funduszu.</li>
-        <li><b>Zadania jak w szachach</b>: szukasz błędów w modelach, zdobywasz rating i utrzymujesz serię dni.</li>
-        <li><b>Case studies</b>: własne modele na danych z SEC EDGAR i GPW.</li>
-      </ul>
-      <div class="auth">
-        <p class="tabs"><a href="#/" class="${reg ? 'active' : ''}">Załóż konto</a> <a href="#/logowanie" class="${reg ? '' : 'active'}">Zaloguj się</a></p>
+    app.innerHTML = `<div class="auth-wrap">
+      <section class="auth-hero">
+        <span class="logo logo-lg" role="img" aria-label="Fundusz Hossa ProCapital"></span>
+        <h1 class="page-header">FinModel Academy</h1>
+        <p class="lead">Ćwicz modelowanie finansowe tak, jak wygląda ono w pracy w IB, PE i ER: DCF, WACC, analizę porównawczą, wyszukiwanie danych i budowanie założeń. Wszystko w arkuszu.</p>
+        <ul class="feature-list">
+          <li><span class="ic">▤</span><span><b>Manual wyceny Funduszu</b>${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)}, od wyboru spółki po raport i aktualizacje.</span></li>
+          <li><span class="ic">♟</span><span><b>Zadania jak w szachach</b>Szukasz błędów w modelach, zdobywasz rating i utrzymujesz serię dni.</span></li>
+          <li><span class="ic">▦</span><span><b>Case studies</b>Własne modele DCF i comps na danych z SEC EDGAR i GPW.</span></li>
+        </ul>
+      </section>
+      <section class="card auth">
+        <div class="seg"><a href="#/" class="${reg ? 'active' : ''}">Załóż konto</a><a href="#/logowanie" class="${reg ? '' : 'active'}">Zaloguj się</a></div>
         <form id="authForm" autocomplete="on">
-          ${reg ? `<label>Imię i nazwisko lub pseudonim (widoczne w rankingu)<input name="name" required maxlength="32" autocomplete="name"></label>` : ''}
+          ${reg ? `<label>Imię i nazwisko lub pseudonim <span class="muted">(widoczne w rankingu)</span><input name="name" required maxlength="32" autocomplete="name"></label>` : ''}
           <label>Login<input name="login" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9._\\-]+" autocomplete="username" title="3–20 znaków: litery, cyfry, . _ -"></label>
           <label>Hasło<input name="pw" type="password" required minlength="${reg ? 8 : 1}" autocomplete="${reg ? 'new-password' : 'current-password'}"></label>
           ${reg ? `<label>Powtórz hasło<input name="pw2" type="password" required autocomplete="new-password"></label>` : ''}
-          <button class="primary">${reg ? 'Załóż konto' : 'Zaloguj się'}</button> <span class="msg" aria-live="polite"></span>
+          <button class="primary wide">${reg ? 'Załóż konto' : 'Zaloguj się'}</button>
+          <span class="msg" aria-live="polite"></span>
         </form>
-        <p class="muted small">Wersja testowa: konto jest zapisane tylko w tej przeglądarce. Hasło jest przechowywane jako skrót PBKDF2. Docelowo logowanie przejdzie na serwer funduszu.</p>
-      </div>`;
+        <p class="muted small">Wersja testowa: konto jest zapisane tylko w tej przeglądarce, a hasło jako skrót PBKDF2. Docelowo logowanie przejdzie na serwer Funduszu.</p>
+      </section>
+    </div>`;
     const f = $('#authForm'), msg = $('.msg', f);
     f.addEventListener('submit', async e => {
       e.preventDefault();
@@ -107,24 +145,28 @@
       ['mid', 1200, 'Mam za sobą pierwsze modele, np. w funduszu albo na praktykach'],
       ['pro', 1400, 'Modeluję zawodowo albo startuję w case competitions'],
     ];
-    app.innerHTML = `
+    app.innerHTML = `<div class="onb">
+      <span class="logo logo-lg" role="img" aria-label="Fundusz Hossa ProCapital"></span>
       <h1 class="page-header">Cześć, ${esc(S.name || user)}!</h1>
       <p class="lead">Od czego zaczynasz? Wybór ustawi Twoją ścieżkę i początkowy rating.</p>
       <div class="paths">
-        <button class="path" data-path="course">
+        <button class="path card" data-path="course">
+          <span class="ic-lg">▤</span>
           <span class="path-t">Kurs od zera</span>
           <span class="path-d">Prowadzimy Cię krok po kroku przez manual wyceny Funduszu: ${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)} z ćwiczeniami w arkuszu. Zadania, case studies i ranking odblokują się po ukończeniu kursu.</span>
         </button>
-        <button class="path" data-path="free">
+        <button class="path card" data-path="free">
+          <span class="ic-lg">♟</span>
           <span class="path-t">Znam podstawy, od razu do praktyki</span>
           <span class="path-d">Masz dostęp do wszystkiego: zadań z ratingiem, case studies i rankingu. Do kursu możesz wracać w dowolnym momencie.</span>
         </button>
       </div>
-      <form id="levelForm" class="level" hidden>
+      <form id="levelForm" class="level card" hidden>
         <h2>Jak oceniasz swój poziom?</h2>
-        ${levels.map(([k, r, l], i) => `<label><input type="radio" name="lvl" value="${k}" ${i ? '' : 'checked'}> ${esc(l)} <span class="chip">start ♟ ${r}</span></label>`).join('')}
-        <p><button class="primary">Zaczynamy</button></p>
-      </form>`;
+        ${levels.map(([k, r, l], i) => `<label class="opt"><input type="radio" name="lvl" value="${k}" ${i ? '' : 'checked'}><span>${esc(l)}</span><span class="chip">start ♟ ${r}</span></label>`).join('')}
+        <button class="primary">Zaczynamy</button>
+      </form>
+    </div>`;
     const start = (path, level) => {
       S.path = path; S.level = level; S.rating = (levels.find(x => x[0] === level) || [, 1000])[1]; S.onboarded = Date.now(); save();
       location.hash = path === 'course' ? '#/kurs/' + allLessons()[0].id : '#/'; route();
@@ -140,58 +182,64 @@
   // ---------- sekcja zablokowana ----------
   function viewLocked(sec) {
     const names = { zadania: 'Zadania', case: 'Case studies', ranking: 'Ranking' };
-    const done = allLessons().filter(l => S.lessons[l.id]).length, total = allLessons().length, next = allLessons().find(l => !S.lessons[l.id]);
-    app.innerHTML = `
-      <h1 class="page-header">🔒 ${names[sec]}</h1>
+    const n = nextLesson();
+    setTop(`<span>${names[sec]}</span>`);
+    app.innerHTML = `<div class="card locked-card">
+      <span class="ic-lg">🔒</span>
+      <h1 class="page-header">${names[sec]}</h1>
       <p class="lead">Ta sekcja odblokuje się po ukończeniu kursu. Na ścieżce „kurs od zera” najpierw budujemy fundamenty.</p>
-      <div class="progress"><i style="width:${(done / total * 100).toFixed(1)}%"></i></div>
-      <p class="muted">${done}/${total} lekcji ukończonych</p>
-      ${next ? `<p><a href="#/kurs/${next.id}">Kontynuuj: ${esc(next.title)} →</a></p>` : ''}`;
+      ${bar(doneCount(), allLessons().length)}
+      <p class="muted">${doneCount()} z ${allLessons().length} lekcji ukończonych</p>
+      ${n ? `<a class="btn primary" href="#/kurs/${n.id}">Kontynuuj: ${esc(n.title)} →</a>` : ''}
+    </div>`;
   }
 
-  // ---------- widok: start ----------
+  // ---------- pulpit ----------
   function viewHome() {
-    if (S.path === 'course' && !courseDone()) return viewCourseHome();
-    const total = Course.flatMap(m => m.lessons).length, done = Object.keys(S.lessons).length;
-    const dailyDone = S.daily[today()];
-    const days = [...Array(28)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 27 + i); return S.days[dayStr(d)] || 0; });
-    const nextLesson = Course.flatMap(m => m.lessons).find(l => !S.lessons[l.id]);
+    const total = allLessons().length, done = doneCount(), n = nextLesson(), m = n && moduleOf(n.id);
+    const coursePath = S.path === 'course' && !courseDone();
+    const daily = S.daily[today()];
+    const days = [...Array(35)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 34 + i); return S.days[dayStr(d)] || 0; });
+    const lockedNote = coursePath ? '<span class="chip">🔒 po kursie</span>' : '';
+    setTop('<span>Pulpit</span>');
     app.innerHTML = `
-      <h1 class="page-header">FinModel Academy</h1>
-      <p class="lead">Nauka modelowania finansowego dla studenckiego funduszu: DCF, WACC, comps, dane i założenia. Ćwiczysz w arkuszu, jak w pracy w IB, PE i ER.</p>
-      <div class="tiles">
-        <div class="tile"><div class="k">Seria</div><div class="v">🔥 ${liveStreak()}</div><div class="s">najdłuższa: ${S.best}</div></div>
-        <div class="tile"><div class="k">Rating</div><div class="v">${S.rating}</div><div class="s">${S.solved}/${S.attempts} rozwiązanych</div></div>
-        <div class="tile"><div class="k">Kurs</div><div class="v">${done}/${total}</div><div class="s">lekcji ukończonych</div></div>
+      <div class="page-head"><h1 class="page-header">${done ? 'Witaj ponownie' : 'Witaj'}, ${esc((S.name || user).split(' ')[0])}</h1>
+        <p class="lead">${coursePath ? 'Jesteś na ścieżce „kurs od zera”. Każda ukończona lekcja przedłuża serię dni.' : 'Twoje miejsce do nauki wyceny: kurs, codzienne zadania i własne modele.'}</p></div>
+      <div class="dash">
+        <section class="card hero-card">
+          <div class="eyebrow">${n ? 'Kontynuuj naukę' : 'Manual wyceny'}</div>
+          ${n ? `<h2 class="card-title">${esc(n.title)}</h2><p class="muted">Moduł ${Course.indexOf(m) + 1}: ${esc(m.title)}</p>`
+            : `<h2 class="card-title">Kurs ukończony 🎓</h2><p class="muted">Wracaj do lekcji, kiedy chcesz odświeżyć standardy Funduszu.</p>`}
+          ${bar(done, total)}
+          <div class="row-between"><span class="muted small">${done} z ${total} lekcji · ${pct(done, total)}%</span>
+            <a class="btn primary" href="#/kurs${n ? '/' + n.id : ''}">${n ? (done ? 'Kontynuuj' : 'Zacznij') + ' →' : 'Otwórz manual'}</a></div>
+        </section>
+        <section class="card daily-card${coursePath ? ' is-locked' : ''}">
+          <div class="eyebrow">Zadanie dnia</div>
+          <h2 class="card-title">${daily ? (daily.ok ? 'Rozwiązane ✓' : 'Podjęte') : 'Czeka na Ciebie'}</h2>
+          <p class="muted">Jedno zadanie w arkuszu dziennie podtrzymuje serię.</p>
+          ${coursePath ? lockedNote : `<a class="btn" href="#/zadania/dzienne">${daily ? 'Zobacz' : 'Rozwiąż'} →</a>`}
+        </section>
       </div>
-      <div class="heat" title="Aktywność z ostatnich 28 dni">${days.map(n => `<i class="l${Math.min(n, 3)}"></i>`).join('')}</div>
-      <h2>Co dziś?</h2>
-      <ul class="list">
-        <li><a href="#/zadania/dzienne">Zadanie dnia</a> ${dailyDone ? (dailyDone.ok ? '<span class="chip ok">rozwiązane</span>' : '<span class="chip">podjęte</span>') : '<span class="chip hot">nowe</span>'}: jedno zadanie, które podtrzymuje serię.</li>
-        <li><a href="#/zadania">Trening</a>: zadania dobierane do Twojego ratingu. Szukasz błędów w formułach albo budujesz brakujące fragmenty modelu.</li>
-        <li><a href="#/kurs${nextLesson ? '/' + nextLesson.id : ''}">Kurs od zera</a>${nextLesson ? `: następna lekcja to „${esc(nextLesson.title)}”` : ': ukończony 🎓'}.</li>
-        <li><a href="#/case">Case studies</a>: własny model DCF i comps na danych z SEC EDGAR, GPW albo na spółce demo.</li>
-      </ul>`;
-  }
-
-  // strona startowa na ścieżce „kurs od zera”: tylko kurs, reszta czeka
-  function viewCourseHome() {
-    const total = allLessons().length, done = allLessons().filter(l => S.lessons[l.id]).length;
-    const next = allLessons().find(l => !S.lessons[l.id]);
-    app.innerHTML = `
-      <h1 class="page-header">${done ? 'Wracamy do nauki' : 'Zaczynamy kurs'}</h1>
-      <p class="lead">${done ? `Masz za sobą ${done} z ${total} lekcji.` : 'Pierwsza lekcja zajmie około 10 minut.'} Każda ukończona lekcja przedłuża Twoją serię dni.</p>
-      <div class="progress"><i style="width:${(done / total * 100).toFixed(1)}%"></i></div>
-      <p><a class="cta" href="#/kurs/${next.id}">${done ? 'Kontynuuj' : 'Zacznij'}: ${esc(next.title)} →</a></p>
-      <div class="tiles">
-        <div class="tile"><div class="k">Seria</div><div class="v">🔥 ${liveStreak()}</div><div class="s">najdłuższa: ${S.best}</div></div>
-        <div class="tile"><div class="k">Kurs</div><div class="v">${done}/${total}</div><div class="s">lekcji ukończonych</div></div>
+      <div class="stat-row">
+        <div class="card stat-card"><div class="k">Seria</div><div class="v">🔥 ${liveStreak()}</div><div class="s">najdłuższa: ${S.best}</div></div>
+        <div class="card stat-card"><div class="k">Rating</div><div class="v">${S.rating}</div><div class="s">${S.solved}/${S.attempts} rozwiązanych</div></div>
+        <div class="card stat-card"><div class="k">Lekcje</div><div class="v">${done}/${total}</div><div class="s">${pct(done, total)}% manuala</div></div>
+        <div class="card stat-card"><div class="k">Modele</div><div class="v">${S.cases.length}</div><div class="s">case studies</div></div>
       </div>
-      <h2>Program</h2>
-      ${Course.map((m, i) => `<h3>${i + 1}. ${esc(m.title)}</h3><ul class="list">${m.lessons.map(l =>
-        `<li>${S.lessons[l.id] ? '✓' : l === next ? '→' : '○'} ${S.lessons[l.id] || l === next ? `<a href="#/kurs/${l.id}">${esc(l.title)}</a>` : esc(l.title)}</li>`).join('')}</ul>`).join('')}
-      <h2>Po ukończeniu kursu</h2>
-      <ul class="list locked-list"><li>🔒 Zadania z ratingiem i zadanie dnia</li><li>🔒 Case studies na danych z SEC EDGAR i GPW</li><li>🔒 Ranking funduszu</li></ul>`;
+      <div class="dash dash-2">
+        <section class="card">
+          <div class="eyebrow">Aktywność · ostatnie 5 tygodni</div>
+          <div class="heat">${days.map(v => `<i class="l${Math.min(v, 3)}"></i>`).join('')}</div>
+          <div class="heat-legend muted small"><span>mniej</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><span>więcej</span></div>
+        </section>
+        <section class="quick">
+          ${[['#/zadania', '♟', 'Trening', 'Zadania dobierane do ratingu: błędy w formułach i brakujące fragmenty modelu.'],
+            ['#/case', '▦', 'Case studies', 'Własny model DCF i comps na danych z SEC EDGAR, GPW albo spółce demo.'],
+            ['#/ranking', '⚑', 'Ranking', 'Porównaj rating i serię z innymi członkami Funduszu.']]
+            .map(([h, ic, t, d]) => `<a class="card quick-card${coursePath ? ' is-locked' : ''}" href="${h}"><span class="ic-lg">${coursePath ? '🔒' : ic}</span><span><b>${t}</b><span class="muted small">${d}</span></span></a>`).join('')}
+        </section>
+      </div>`;
   }
 
   // ---------- zadania (puzzle) ----------
@@ -205,11 +253,11 @@
         <button data-act="hint">Podpowiedź</button>
         <button data-act="solve">Pokaż rozwiązanie</button>
         <button data-act="reset">Od nowa</button>
-        ${opts.nextLabel ? `<button data-act="next">${opts.nextLabel}</button>` : ''}
+        ${opts.nextLabel ? `<button data-act="next" class="push">${opts.nextLabel}</button>` : ''}
         <span class="msg" aria-live="polite"></span>
       </div>
       <div class="result"></div>
-      <p class="keys">Skróty: <kbd>Enter</kbd>/<kbd>F2</kbd> edycja · <kbd>Ctrl/Cmd+C</kbd> <kbd>Ctrl/Cmd+V</kbd> kopiuj/wklej z przesunięciem adresów · <kbd>Shift</kbd>+strzałki zaznaczenie · <kbd>Ctrl/Cmd+\`</kbd> pokaż formuły · podczas pisania formuły klik w komórkę wstawia adres.</p>`;
+      <details class="keys"><summary>Skróty klawiszowe arkusza</summary><p><kbd>Enter</kbd>/<kbd>F2</kbd> edycja · <kbd>Ctrl/Cmd+C</kbd> <kbd>Ctrl/Cmd+V</kbd> kopiuj/wklej z przesunięciem adresów · <kbd>Shift</kbd>+strzałki zaznaczenie · <kbd>Ctrl/Cmd+\`</kbd> pokaż formuły · podczas pisania formuły klik w komórkę wstawia adres.</p></details>`;
     let bad = new Set(), revealed = false;
     const view = new Sheet.View($('.sheet-host', container), book, {
       widths: puzzle.widths, start: puzzle.kind === 'build' ? Object.keys(puzzle.fix)[0] : 'B3',
@@ -249,28 +297,31 @@
       p = Puzzles.instantiate(S.current.id, S.current.seed);
     }
     const ratedAlready = daily ? !!slot : S.current.rated;
+    setTop(`<span>Praktyka</span><span class="sep">/</span><span>${daily ? 'Zadanie dnia' : 'Trening'}</span>`);
     app.innerHTML = `
-      <h1 class="page-header">${daily ? 'Zadanie dnia' : 'Trening'}</h1>
-      <div class="pz-head">
-        <div><h2 class="pz-title">${esc(p.title)}</h2>
-          <span class="chip">${esc(p.topic)}</span> <span class="chip">${p.kind === 'fix' ? 'znajdź błąd' : 'zbuduj'}</span> <span class="chip">♟ ${p.rating}</span>
-          ${ratedAlready ? '<span class="chip">bez wpływu na rating</span>' : ''}</div>
-        ${daily ? '' : `<label class="topic">Temat <select id="topic"><option value="">wszystkie</option>${Puzzles.topics.map(t => `<option ${S.topic === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`}
+      <div class="page-head row-between">
+        <div><div class="eyebrow">${daily ? 'Zadanie dnia · ' + new Date().toLocaleDateString('pl-PL') : 'Trening'}</div>
+          <h1 class="page-header">${esc(p.title)}</h1>
+          <div class="chips"><span class="chip">${esc(p.topic)}</span><span class="chip">${p.kind === 'fix' ? 'znajdź błąd' : 'zbuduj'}</span><span class="chip">♟ ${p.rating}</span>${ratedAlready ? '<span class="chip">bez wpływu na rating</span>' : ''}</div></div>
+        <div class="pz-side">
+          <div class="mini-stat"><span class="k">Twój rating</span><span class="v">${S.rating}</span></div>
+          ${daily ? '' : `<label class="topic">Temat<select id="topic"><option value="">wszystkie</option>${Puzzles.topics.map(t => `<option ${S.topic === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`}
+        </div>
       </div>
-      <div id="pz"></div>`;
+      <section class="card work-card" id="pz"></section>`;
     let hinted = false;
     const finish = (ok, info) => {
       if (daily) {
         if (!S.daily[today()]) { S.daily[today()] = { ok }; applyRating(p, ok, hinted); if (ok) bumpStreak(); }
         else if (ok && !S.daily[today()].ok) { S.daily[today()].ok = true; bumpStreak(); }
-        save(); return;
+        save(); renderNav(); return;
       }
       if (!S.current.rated) { S.current.rated = true; applyRating(p, ok && !info.revealed, hinted); }
       if (ok && !S.current.solvedOnce) { S.current.solvedOnce = true; bumpStreak(); }
       save();
     };
     mountPuzzle($('#pz'), p, {
-      nextLabel: daily ? '' : 'Następne →',
+      nextLabel: daily ? '' : 'Następne zadanie →',
       onHint: () => { hinted = true; },
       onResult: finish,
       onNext: () => { S.recent = [...S.recent, p.id].slice(-8); S.current = null; save(); viewPuzzles(); },
@@ -286,37 +337,76 @@
 
   // ---------- kurs ----------
   function viewCourse() {
-    app.innerHTML = `<h1 class="page-header">Kurs od zera</h1>
-      <p class="lead">Manual tworzenia wyceny według standardów Funduszu: ${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)}, od wyboru spółki po raport i aktualizacje. Każda lekcja kończy się pytaniami, a większość także ćwiczeniem w arkuszu.</p>
+    const n = nextLesson();
+    setTop('<span>Manual wyceny</span>');
+    app.innerHTML = `
+      <div class="page-head row-between">
+        <div><h1 class="page-header">Manual wyceny</h1>
+          <p class="lead">Tworzenie wyceny według standardów Funduszu: ${Course.length} modułów i ${allLessons().length} ${lekcje(allLessons().length)}, od wyboru spółki po raport i aktualizacje. Każda lekcja kończy się pytaniami, a większość także ćwiczeniem w arkuszu.</p></div>
+        <div class="card mini-progress"><div class="k">Ukończono</div><div class="v">${doneCount()}/${allLessons().length}</div>${bar(doneCount(), allLessons().length)}
+          ${n ? `<a class="btn primary" href="#/kurs/${n.id}">Kontynuuj →</a>` : ''}</div>
+      </div>
+      <div class="modules">
       ${Course.map((m, i) => {
-        const d = m.lessons.filter(l => S.lessons[l.id]).length;
-        return `<h2>${i + 1}. ${esc(m.title)} <span class="muted">${d}/${m.lessons.length}</span></h2>
-        <ul class="list">${m.lessons.map(l => `<li>${S.lessons[l.id] ? '✓' : '○'} <a href="#/kurs/${l.id}">${esc(l.title)}</a>${l.exercise ? ' <span class="chip">arkusz</span>' : ''}</li>`).join('')}</ul>`;
-      }).join('')}`;
+        const d = m.lessons.filter(l => S.lessons[l.id]).length, full = d === m.lessons.length;
+        return `<section class="card module${full ? ' done' : ''}">
+          <header class="module-head"><span class="num">${full ? '✓' : i + 1}</span>
+            <div class="module-t"><h2>${esc(m.title)}</h2><span class="muted small">${d}/${m.lessons.length} ${lekcje(m.lessons.length)}</span></div>
+            <div class="module-bar">${bar(d, m.lessons.length)}</div></header>
+          <ol class="lesson-list">${m.lessons.map(l => `<li><a class="lrow${S.lessons[l.id] ? ' done' : ''}${n === l ? ' next' : ''}" href="#/kurs/${l.id}">
+            <span class="st">${S.lessons[l.id] ? '✓' : n === l ? '→' : '○'}</span><span class="lt">${esc(l.title)}</span>
+            ${l.exercise ? '<span class="chip">arkusz</span>' : ''}<span class="go">›</span></a></li>`).join('')}</ol>
+        </section>`;
+      }).join('')}
+      </div>`;
   }
   function viewLesson(id) {
     const all = Course.flatMap(m => m.lessons.map(l => ({ ...l, module: m })));
     const idx = all.findIndex(l => l.id === id); const L = all[idx]; if (!L) return viewCourse();
+    const mi = Course.indexOf(L.module), prev = all[idx - 1], next = all[idx + 1];
     const quizOk = new Array(L.quiz.length).fill(false); let exOk = !L.exercise;
-    app.innerHTML = `<p class="crumbs"><a href="#/kurs">Kurs</a> / ${esc(L.module.title)}</p>
-      <h1 class="page-header">${esc(L.title)}</h1>
-      <article class="prose">${L.body}</article>
-      ${L.src ? `<p class="src">Na podstawie: ${esc(L.src)}</p>` : ''}
-      <h2>Sprawdź się</h2>
-      ${L.quiz.map((q, qi) => `<fieldset class="quiz" data-q="${qi}"><legend>${esc(q.q)}</legend>
-        ${q.options.map((o, oi) => `<label><input type="radio" name="q${qi}" value="${oi}"> ${esc(o)}</label>`).join('')}
-        <div class="qres"></div></fieldset>`).join('')}
-      ${L.exercise ? `<h2>Ćwiczenie w arkuszu</h2><div id="ex"></div>` : ''}
-      <div class="lesson-foot"><span id="lstatus"></span>
-        ${all[idx + 1] ? `<a href="#/kurs/${all[idx + 1].id}">Następna: ${esc(all[idx + 1].title)} →</a>` : '<a href="#/zadania">Kurs ukończony. Przejdź do treningu →</a>'}</div>`;
+    setTop(`<a href="#/kurs">Manual wyceny</a><span class="sep">/</span><span>Moduł ${mi + 1}</span><span class="sep">/</span><span>${esc(L.title)}</span>`);
+    app.innerHTML = `
+      <div class="lesson-layout">
+        <div class="lesson-main">
+          <div class="eyebrow">Moduł ${mi + 1} · ${esc(L.module.title)} · lekcja ${idx + 1} z ${all.length}</div>
+          <h1 class="page-header">${esc(L.title)}</h1>
+          <article class="prose">${L.body}</article>
+          ${L.src ? `<p class="src">Na podstawie: ${esc(L.src)}</p>` : ''}
+          <h2 id="quiz">Sprawdź się</h2>
+          ${L.quiz.map((q, qi) => `<fieldset class="quiz card" data-q="${qi}"><legend>${esc(q.q)}</legend>
+            ${q.options.map((o, oi) => `<label class="opt"><input type="radio" name="q${qi}" value="${oi}"><span>${esc(o)}</span></label>`).join('')}
+            <div class="qres"></div></fieldset>`).join('')}
+          ${L.exercise ? `<h2 id="cwiczenie">Ćwiczenie w arkuszu</h2><section class="card work-card" id="ex"></section>` : ''}
+          <nav class="pager">
+            ${prev ? `<a class="card pager-card" href="#/kurs/${prev.id}"><span class="muted small">← Poprzednia</span><b>${esc(prev.title)}</b></a>` : '<span></span>'}
+            ${next ? `<a class="card pager-card right" href="#/kurs/${next.id}"><span class="muted small">Następna →</span><b>${esc(next.title)}</b></a>`
+              : `<a class="card pager-card right" href="#/zadania"><span class="muted small">Koniec manuala →</span><b>Przejdź do treningu</b></a>`}
+          </nav>
+        </div>
+        <aside class="lesson-aside">
+          <section class="card">
+            <div class="eyebrow">Status lekcji</div>
+            <div id="lstatus"></div>
+          </section>
+          <section class="card">
+            <div class="eyebrow">Moduł ${mi + 1}</div>
+            <b class="aside-t">${esc(L.module.title)}</b>
+            <ol class="aside-list">${L.module.lessons.map(l => `<li><a href="#/kurs/${l.id}" class="${l.id === id ? 'current' : ''}${S.lessons[l.id] ? ' done' : ''}"><span class="st">${S.lessons[l.id] ? '✓' : l.id === id ? '●' : '○'}</span>${esc(l.title)}</a></li>`).join('')}</ol>
+          </section>
+        </aside>
+      </div>`;
     const status = () => {
-      const ok = quizOk.every(Boolean) && exOk;
-      $('#lstatus').innerHTML = S.lessons[id] ? '<span class="chip ok">lekcja ukończona</span>' : ok ? '' : `<span class="muted">Do ukończenia: ${quizOk.filter(x => !x).length} pyt.${exOk ? '' : ' + ćwiczenie'}</span>`;
-      if (ok && !S.lessons[id]) {
+      const done = S.lessons[id], left = quizOk.filter(x => !x).length;
+      $('#lstatus').innerHTML = `<ul class="checks">
+        <li class="${done || !left ? 'ok' : ''}"><span>${done || !left ? '✓' : '○'}</span><a href="#" data-jump="#quiz">Pytania ${done ? L.quiz.length : L.quiz.length - left}/${L.quiz.length}</a></li>
+        ${L.exercise ? `<li class="${done || exOk ? 'ok' : ''}"><span>${done || exOk ? '✓' : '○'}</span><a href="#" data-jump="#cwiczenie">Ćwiczenie w arkuszu</a></li>` : ''}
+      </ul>${done ? '<span class="chip ok">lekcja ukończona</span>' : '<span class="muted small">Ukończ wszystkie elementy, żeby zaliczyć lekcję.</span>'}`;
+      if (quizOk.every(Boolean) && exOk && !S.lessons[id]) {
         S.lessons[id] = Date.now(); save(); bumpStreak();
-        if (S.path === 'course' && courseDone()) { toast('🎓 Kurs ukończony! Odblokowano zadania, case studies i ranking'); renderNav(); }
+        if (S.path === 'course' && courseDone()) toast('🎓 Kurs ukończony! Odblokowano zadania, case studies i ranking');
         else toast('🎓 Lekcja ukończona');
-        status();
+        renderNav(); status();
       }
     };
     app.querySelectorAll('.quiz').forEach(fs => fs.addEventListener('change', e => {
@@ -336,12 +426,18 @@
     const rows = names.map(n => ({ n, rating: 820 + Math.round(rng() * 700), streak: Math.round(rng() * 40), solved: Math.round(rng() * 300) }));
     rows.push({ n: S.name ? `${S.name} (Ty)` : 'Ty', rating: S.rating, streak: liveStreak(), solved: S.solved, me: true });
     rows.sort((a, b) => b[tab] - a[tab]);
-    app.innerHTML = `<h1 class="page-header">Ranking</h1>
-      <p class="lead">Ranking funduszu. <span class="muted">W wersji testowej pozostali uczestnicy są fikcyjni: prawdziwy ranking wymaga backendu z kontami.</span></p>
-      <p class="tabs">${[['rating', 'Rating'], ['streak', 'Seria'], ['solved', 'Rozwiązane']].map(([k, l]) => `<a href="#/ranking/${k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join(' ')}</p>
-      <div class="table-container"><table class="rank"><thead><tr><th>#</th><th>Uczestnik</th><th>Rating</th><th>Seria</th><th>Rozwiązane</th></tr></thead><tbody>
+    const pos = rows.findIndex(r => r.me) + 1;
+    setTop('<span>Fundusz</span><span class="sep">/</span><span>Ranking</span>');
+    app.innerHTML = `
+      <div class="page-head row-between">
+        <div><h1 class="page-header">Ranking</h1>
+          <p class="lead">Ranking członków Funduszu. <span class="muted">W wersji testowej pozostali uczestnicy są fikcyjni: prawdziwy ranking wymaga backendu z kontami.</span></p></div>
+        <div class="card mini-progress"><div class="k">Twoje miejsce</div><div class="v">${pos} / ${rows.length}</div></div>
+      </div>
+      <div class="seg">${[['rating', 'Rating'], ['streak', 'Seria'], ['solved', 'Rozwiązane']].map(([k, l]) => `<a href="#/ranking/${k}" class="${tab === k ? 'active' : ''}">${l}</a>`).join('')}</div>
+      <section class="card table-card"><div class="table-container"><table class="rank"><thead><tr><th>#</th><th>Uczestnik</th><th>Rating</th><th>Seria</th><th>Rozwiązane</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr class="${r.me ? 'me' : ''}"><td>${i + 1}</td><td>${esc(r.n)}</td><td>${r.rating}</td><td>🔥 ${r.streak}</td><td>${r.solved}</td></tr>`).join('')}
-      </tbody></table></div>`;
+      </tbody></table></div></section>`;
   }
 
   // ---------- case studies ----------
@@ -356,17 +452,26 @@
     }
   }
   function viewCases() {
-    app.innerHTML = `<h1 class="page-header">Case studies</h1>
-      <p class="lead">Tryb „singleplayer”: prywatny model na prawdziwych danych. Arkusz ma gotową strukturę DCF, WACC, comps i tabelę wrażliwości. Założenia i uzasadnienia są Twoje.</p>
-      <h2>Nowy case</h2>
-      <form id="newCase" class="newcase">
-        <label>Rynek <select name="market"><option value="US">USA: dane z SEC EDGAR</option><option value="GPW">GPW: kurs pobierany automatycznie, dane z raportu wpisujesz sam</option><option value="DEMO">Demo: fikcyjna spółka</option></select></label>
-        <label>Ticker <input name="ticker" placeholder="np. AAPL / PKN" maxlength="12"></label>
-        <label>Nazwa (opcjonalnie) <input name="name" maxlength="60"></label>
-        <button class="primary">Utwórz model</button> <span class="msg"></span>
-      </form>
-      <h2>Twoje modele</h2>
-      ${S.cases.length ? `<ul class="list">${S.cases.map(c => `<li><a href="#/case/${c.id}">${esc(c.name)}</a> <span class="chip">${esc(c.market)}</span> <span class="muted">${new Date(c.updated).toLocaleDateString('pl-PL')}</span></li>`).join('')}</ul>` : '<p class="muted">Brak modeli. Zacznij od spółki demo albo wpisz ticker.</p>'}`;
+    setTop('<span>Praktyka</span><span class="sep">/</span><span>Case studies</span>');
+    app.innerHTML = `
+      <div class="page-head"><h1 class="page-header">Case studies</h1>
+        <p class="lead">Tryb „singleplayer”: prywatny model na prawdziwych danych. Arkusz ma gotową strukturę DCF, WACC, comps i tabelę wrażliwości. Założenia i uzasadnienia są Twoje.</p></div>
+      <div class="case-grid">
+        <section class="card">
+          <div class="eyebrow">Nowy model</div>
+          <form id="newCase" class="newcase">
+            <label>Rynek<select name="market"><option value="US">USA: dane z SEC EDGAR</option><option value="GPW">GPW: dane z raportu wpisujesz sam</option><option value="DEMO">Demo: fikcyjna spółka</option></select></label>
+            <label>Ticker<input name="ticker" placeholder="np. AAPL / PKN" maxlength="12"></label>
+            <label>Nazwa <span class="muted">(opcjonalnie)</span><input name="name" maxlength="60"></label>
+            <button class="primary wide">Utwórz model</button> <span class="msg"></span>
+          </form>
+        </section>
+        <section class="cases">
+          <div class="eyebrow">Twoje modele</div>
+          ${S.cases.length ? S.cases.map(c => `<a class="card case-card" href="#/case/${c.id}"><span class="ic-lg">▦</span><span class="case-t"><b>${esc(c.name)}</b><span class="muted small">${esc(c.market)} · zmieniony ${new Date(c.updated).toLocaleDateString('pl-PL')}</span></span><span class="go">›</span></a>`).join('')
+            : '<div class="card empty"><b>Nie masz jeszcze modeli</b><span class="muted small">Zacznij od spółki demo: wybierz „Demo” i kliknij „Utwórz model”.</span></div>'}
+        </section>
+      </div>`;
     const form = $('#newCase'), msg = $('.msg', form);
     form.addEventListener('submit', async e => {
       e.preventDefault();
@@ -400,28 +505,33 @@
   function viewCase(id) {
     const c = S.cases.find(x => x.id === id); if (!c) return viewCases();
     const book = new Sheet.Book(c.cells);
-    app.innerHTML = `<p class="crumbs"><a href="#/case">Case studies</a> / ${esc(c.market)}</p>
-      <h1 class="page-header">${esc(c.name)}</h1>
-      <div id="sum" class="tiles"></div><div id="ff"></div>
-      <p class="muted small">Niebieskie komórki to dane i założenia. Czarne to formuły. Kolumna L służy do zapisywania źródeł i uzasadnień. Model zapisuje się automatycznie w tej przeglądarce.</p>
-      <div class="sheet-host big"></div>
-      <div class="actions"><button data-act="copy">Kopiuj do Excela</button><button data-act="del" class="danger">Usuń model</button><span class="msg"></span></div>`;
+    setTop(`<a href="#/case">Case studies</a><span class="sep">/</span><span>${esc(c.name)}</span>`);
+    app.innerHTML = `
+      <div class="page-head row-between">
+        <div><div class="eyebrow">Case study · ${esc(c.market)}</div><h1 class="page-header">${esc(c.name)}</h1></div>
+        <div class="actions"><button data-act="copy">Kopiuj do Excela</button><button data-act="del" class="danger">Usuń model</button><span class="msg"></span></div>
+      </div>
+      <div id="sum" class="stat-row three"></div><div id="ff"></div>
+      <section class="card work-card">
+        <p class="muted small">Niebieskie komórki to dane i założenia. Czarne to formuły. Kolumna L służy do zapisywania źródeł i uzasadnień. Model zapisuje się automatycznie w tej przeglądarce.</p>
+        <div class="sheet-host big"></div>
+      </section>`;
     const fmt = (v, f) => v == null ? '—' : Sheet.format(v, f);
     const renderSum = () => {
       const s = Cases.summary(book);
       $('#sum').innerHTML = `
-        <div class="tile"><div class="k">Wartość / akcję (DCF)</div><div class="v">${fmt(s.dcf, 'num2')}</div><div class="s">kurs: ${fmt(s.price, 'num2')}</div></div>
-        <div class="tile"><div class="k">Potencjał</div><div class="v ${s.upside > 0 ? 'pos' : s.upside < 0 ? 'neg' : ''}">${fmt(s.upside, 'pct')}</div><div class="s">EV: ${fmt(s.ev, 'num')}</div></div>
-        <div class="tile"><div class="k">WACC / udział TV</div><div class="v">${fmt(s.wacc, 'pct')}</div><div class="s">TV = ${fmt(s.tvShare, 'pct')} EV${s.tvShare > 0.8 ? ' ⚠' : ''}</div></div>`;
+        <div class="card stat-card"><div class="k">Wartość / akcję (DCF)</div><div class="v">${fmt(s.dcf, 'num2')}</div><div class="s">kurs: ${fmt(s.price, 'num2')}</div></div>
+        <div class="card stat-card"><div class="k">Potencjał</div><div class="v ${s.upside > 0 ? 'pos' : s.upside < 0 ? 'neg' : ''}">${fmt(s.upside, 'pct')}</div><div class="s">EV: ${fmt(s.ev, 'num')}</div></div>
+        <div class="card stat-card"><div class="k">WACC / udział TV</div><div class="v">${fmt(s.wacc, 'pct')}</div><div class="s">TV = ${fmt(s.tvShare, 'pct')} EV${s.tvShare > 0.8 ? ' ⚠' : ''}</div></div>`;
       const rs = s.ranges.filter(r => r.lo != null), vals = rs.flatMap(r => [r.lo, r.hi]).concat(s.price ?? []);
       if (!rs.length) { $('#ff').innerHTML = ''; return; }
       const lo = Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.1, x = v => ((v - lo) / (hi - lo) * 100).toFixed(2);
-      $('#ff').innerHTML = `<h3>Zakresy wyceny (football field)</h3><div class="ff">${rs.map(r => `
+      $('#ff').innerHTML = `<section class="card"><div class="eyebrow">Zakresy wyceny (football field)</div><div class="ff">${rs.map(r => `
         <div class="ff-row"><span class="ff-l">${esc(r.label)}</span><span class="ff-track">
           <i class="ff-bar" style="left:${x(r.lo)}%;width:max(3px,${x(r.hi) - x(r.lo)}%)"></i>
           ${s.price ? `<i class="ff-price" style="left:${x(s.price)}%"></i>` : ''}</span>
           <span class="ff-v">${fmt(r.lo, 'num2')}${r.hi !== r.lo ? ' – ' + fmt(r.hi, 'num2') : ''}</span></div>`).join('')}
-        ${s.price ? `<p class="muted small">Pionowa linia to bieżący kurs (${fmt(s.price, 'num2')}).</p>` : ''}</div>`;
+        ${s.price ? `<p class="muted small">Pionowa linia to bieżący kurs (${fmt(s.price, 'num2')}).</p>` : ''}</div></section>`;
     };
     let t;
     new Sheet.View($('.sheet-host', app), book, {
@@ -432,7 +542,7 @@
     renderSum();
     app.querySelector('.actions').addEventListener('click', e => {
       const msg = $('.actions .msg');
-      // kopiowanie zamiast pobierania pliku: działa też w wersji online, a wklejone do Excela formuły od razu się przeliczają
+      // kopiowanie zamiast pobierania pliku: wklejone do Excela formuły od razu się przeliczają
       if (e.target.dataset.act === 'copy') {
         const { cols, rows } = book.bounds(); const lines = [];
         for (let r = 1; r <= rows; r++) { const row = []; for (let k = 1; k <= cols; k++) row.push(String(book.raw(Sheet.addr(k, r))).replace(/[\t\n]/g, ' ')); lines.push(row.join('\t')); }
@@ -441,7 +551,7 @@
           .then(() => { msg.textContent = 'Skopiowano. Wklej do pustego arkusza Excela (komórka A1).'; })
           .catch(() => { msg.textContent = 'Przeglądarka nie pozwoliła skopiować. Zaznacz komórki w arkuszu i użyj Ctrl/Cmd+C.'; });
       }
-      // usuwanie w dwóch krokach (okna potwierdzenia są blokowane w wersji online)
+      // usuwanie w dwóch krokach zamiast okna potwierdzenia
       if (e.target.dataset.act === 'del') {
         if (e.target.dataset.armed) { S.cases = S.cases.filter(x => x.id !== id); save(); location.hash = '#/case'; }
         else { e.target.dataset.armed = 1; e.target.textContent = 'Kliknij ponownie, aby usunąć'; setTimeout(() => { delete e.target.dataset.armed; e.target.textContent = 'Usuń model'; }, 4000); }
@@ -452,7 +562,8 @@
   // ---------- router ----------
   function route() {
     const [, a, b] = (location.hash || '#/').split('/');
-    window.scrollTo(0, 0);
+    window.scrollTo(0, 0); closeMenu();
+    renderNav();
     if (!user) viewAuth(a === 'logowanie' ? 'login' : 'register');
     else if (!S.path) viewOnboarding();
     else if (isLocked(a)) viewLocked(a);

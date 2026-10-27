@@ -10,19 +10,31 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="img/logo-mark.svg" type="image/svg+xml">
 </head>
-<body>
-  <div class="content">
-    <nav>
-      <div class="left-nav"><a href="#/" class="brand"><span class="logo" role="img" aria-label="Fundusz Hossa ProCapital"></span><span class="brand-name">FinModel Academy</span></a><span id="stats" class="stats"></span></div>
-      <div class="right-nav">
-        <span id="links"></span>
-        <span id="user" class="user"></span>
-        <button id="theme" type="button" title="Zmień motyw" aria-label="Zmień motyw">◐</button>
+<body class="bare">
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Nawigacja">
+      <a href="#/" class="sb-brand"><span class="logo" role="img" aria-label="Fundusz Hossa ProCapital"></span><span class="sb-app">FinModel Academy</span></a>
+      <nav class="sb-nav" id="links"></nav>
+      <div class="sb-progress" id="sbProgress"></div>
+      <div class="sb-foot">
+        <div id="user" class="sb-user"></div>
+        <div class="sb-actions">
+          <button id="theme" type="button" class="sb-btn">◐ Motyw</button>
+          <button id="logout" type="button" class="sb-btn">Wyloguj</button>
+        </div>
       </div>
-    </nav>
-    <main id="app"></main>
-    <footer>Wersja testowa · postępy zapisują się lokalnie w tej przeglądarce · Fundusz Hossa ProCapital</footer>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <button id="menuBtn" class="menu-btn" type="button" aria-label="Otwórz menu">☰</button>
+        <div id="crumbs" class="tb-title"></div>
+        <div id="stats" class="stats"></div>
+      </header>
+      <main id="app"></main>
+      <footer>Wersja testowa · postępy zapisują się lokalnie w tej przeglądarce · Fundusz Hossa ProCapital</footer>
+    </div>
   </div>
+  <div class="scrim" id="scrim"></div>
   <script src="js/sheet.js"></script>
   <script src="js/puzzles.js"></script>
   <script src="js/course.js"></script>
